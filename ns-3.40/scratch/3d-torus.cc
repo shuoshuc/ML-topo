@@ -20,7 +20,6 @@
 
 #include "ns3/applications-module.h"
 #include "ns3/core-module.h"
-#include "ns3/flow-monitor-helper.h"
 #include "ns3/internet-stack-helper.h"
 #include "ns3/ipv4-address-helper.h"
 #include "ns3/ipv4-global-routing-helper.h"
@@ -44,14 +43,14 @@
 #include <vector>
 
 using namespace ns3;
-// Maps from a tuple-format coordinate <x, y, z> to a NodeContainer with 1 node.
-// e.g., <0, 1, 0>: {node}
+// Maps from a tuple-format coordinate <x, y, z> to a Node ptr.
+// e.g., <0, 1, 0>: Ptr<node>
 using CoordNodeMap =
-    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, NodeContainer>;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, Ptr<Node>>;
 // Maps from a tuple-format coordinate <x, y, z> to a NetDeviceContainer with 6
-// devices. e.g., <0, 1, 0>: {'x+': {dev1}, 'x-': {dev2}, ...}
+// devices. e.g., <0, 1, 0>: {'x+': Ptr<dev1>, 'x-': Ptr<dev2>, ...}
 using CoordDeviceMap = std::map<std::tuple<uint32_t, uint32_t, uint32_t>,
-                                std::map<std::string, NetDeviceContainer>>;
+                                std::map<std::string, Ptr<NetDevice>>>;
 // Maps from a tuple-format coordinate <x, y, z> (with up/down facing) to an
 // Ipv4InterfaceContainer filled with interfaces.
 // e.g., 'tor-up': {if1, if2, ...}
@@ -60,6 +59,9 @@ using CoordInterfaceMap =
              std::map<std::string, Ipv4InterfaceContainer>>;
 
 NS_LOG_COMPONENT_DEFINE("3D-Torus");
+
+// Returns the wrapped-around coordinate, e.g., 0 - 1 = -1 => 2 (when range=3).
+int wrapCoord(int coord, int range) { return (range + coord % range) % range; }
 
 // Callback function to compute flow completion time.
 void calcFCT(Ptr<OutputStreamWrapper> stream, bool filter, const Time &start,
@@ -108,13 +110,13 @@ int main(int argc, char *argv[]) {
   // Fabric name.
   std::string NET = "toy1";
   // Number of nodes on each dimension.
-  int N = 2;
+  int N = 16;
   // For 3D Torus, the degree of each node is 6.
   int DEGREE = 6;
-  // The FQDNs of devices which should enable pcap trace on.
-  std::set<std::string> pcap_fqdn{
-      //"toy1-x0-y1-z0-y+",
-      //"toy1-x1-y1-z1-x-",
+  // The corrdinates of devices which should enable pcap trace on.
+  std::set<std::tuple<uint32_t, uint32_t, uint32_t, std::string>> pcap_ifs{
+      //{0, 1, 0, "x+"},
+      //{1, 1, 0, "z-"},
   };
   // A vector of node names where the routing table of each should be dumped.
   std::vector<std::string> subscribed_routing_tables{};
@@ -138,17 +140,8 @@ int main(int argc, char *argv[]) {
   // == Global configurations ==
   // ==                       ==
   // ===========================
-  GlobalValue::Bind("SimulatorImplementationType",
-                    StringValue("ns3::DistributedSimulatorImpl"));
   // Overrides default TCP MSS from 536B to 1448B to match Ethernet.
   Config::SetDefault("ns3::TcpSocket::SegmentSize", UintegerValue(1448));
-  Config::SetDefault("ns3::Ipv4StaticRouting::FlowEcmpRouting",
-                     BooleanValue(flowEcmp));
-  Config::SetDefault("ns3::Ipv4StaticRouting::UseWcmp", BooleanValue(useWcmp));
-  Config::SetDefault("ns3::Ipv4StaticRouting::FlowletLB",
-                     BooleanValue(flowlet));
-  Config::SetDefault("ns3::Ipv4StaticRouting::FlowletTimeout",
-                     TimeValue(MicroSeconds(500)));
   GlobalValue::Bind("ChecksumEnabled", BooleanValue(false));
   /*
   // Sets default CCA to CUBIC.
@@ -178,154 +171,73 @@ int main(int argc, char *argv[]) {
   // ==                 ==
   // =====================
   NS_LOG_INFO("Create topology.");
-  std::map<std::string, Ptr<Node>> globalNodeMap;
-  std::map<std::string, Ptr<NetDevice>> globalDeviceMap;
-  std::map<std::string, std::pair<Ptr<Ipv4>, uint32_t>> globalInterfaceMap;
-  // This map maintains the AggrBlock port peering information. For each bi-di
-  // link, the records exist in the map, e.g.,
-  // f2-c1-ab1-p1: f2-c2-ab1-p1
-  // f2-c2-ab1-p1: f2-c1-ab1-p1
-  std::map<std::string, std::string> globalPeerMap;
-  // Maintains the inter-cluster links between any given pair of aggregation
-  // blocks, links are bi-di, so stored twice in both directions, e.g.,
-  // <f2-c1-ab1, f2-c2-ab1>: {<f2-c1-ab1-p1, f2-c2-ab1-p1>}
-  // <f2-c2-ab1, f2-c1-ab1>: {<f2-c2-ab1-p1, f2-c1-ab1-p1>}
-  std::map<std::pair<std::string, std::string>, std::vector<Link>>
-      globalDcnLinkMap;
-  // All the nodes grouped by clusters.
-  std::vector<StageNodeMap> cluster_nodes(NUM_CLUSTER);
-  // All the devices grouped by clusters.
-  std::vector<StageDeviceMap> cluster_devices(NUM_CLUSTER);
-  // All the interfaces grouped by clusters.
-  std::vector<StageInterfaceMap> cluster_ifs(NUM_CLUSTER);
-  // The available DCN port index grouped by clusters.
-  std::vector<std::queue<int>> cluster_dcn_ports(NUM_CLUSTER);
+  CoordNodeMap coordNodeMap;
+  CoordDeviceMap coordDeviceMap;
+  // std::map<std::string, std::pair<Ptr<Ipv4>, uint32_t>> globalInterfaceMap;
 
-  // Iterates over each cluster, adds aggregation block and ToR nodes and tracks
-  // them separately using their FQDNs.
-  for (int i = 0; i < NUM_CLUSTER; ++i) {
-    // Creates aggregation block. Assuming only 1 AggrBlock in each cluster.
-    std::string aggr_name = NET + "-c" + std::to_string(i + 1) + "-ab1";
-    // Node is created with system id = cluster id.
-    Ptr<Node> aggr = CreateObject<Node>(useMpi ? i : 0);
-    cluster_nodes[i]["aggr"].Add(aggr);
-    globalNodeMap[aggr_name] = aggr;
-    for (int p = 1; p <= NUM_AGGR_PORTS; p += 2) {
-      cluster_dcn_ports[i].push(p);
+  // Iterates over each node, tracks them separately using their FQDNs.
+  for (int x = 0; x < N; ++x) {
+    for (int y = 0; y < N; ++y) {
+      for (int z = 0; z < N; ++z) {
+        Ptr<Node> new_node = CreateObject<Node>(0);
+        coordNodeMap[{x, y, z}] = new_node;
+      }
     }
-
-    // Creates ToR switches and connects them to AggrBlock.
-    // Intra-cluster links all have the same speed and latency.
-    PointToPointHelper intraClusterLink;
-    int gen_id = getClusterGenByIndex(i + 1, GEN_VEC);
-    // Invalid generation id, abort.
-    if (gen_id < 0) {
-      NS_LOG_ERROR("Invalid cluster index. Gen id " << gen_id);
-      return -1;
-    }
-    intraClusterLink.SetDeviceAttribute(
-        "DataRate", StringValue(std::to_string(SPEED_MAP[gen_id] *
-                                               NUM_AGGR_PORTS / 2 / NUM_TOR) +
-                                "Gbps"));
-    intraClusterLink.SetChannelAttribute("Delay", StringValue("20us"));
-    for (int idx = 0; idx < NUM_TOR; ++idx) {
-      std::string tor_name =
-          NET + "-c" + std::to_string(i + 1) + "-t" + std::to_string(idx + 1);
-      // Node is created with system id = cluster id.
-      Ptr<Node> tor = CreateObject<Node>(useMpi ? i : 0);
-      cluster_nodes[i]["tor"].Add(tor);
-      globalNodeMap[tor_name] = tor;
-      // Establishes AggrBlock-ToR connectivity.
-      NetDeviceContainer link = intraClusterLink.Install(tor, aggr);
-      Ptr<NetDevice> tor_port = link.Get(0);
-      Ptr<NetDevice> aggr_port = link.Get(1);
-      std::string tor_dev_name = tor_name + "-p1";
-      std::string aggr_dev_name =
-          aggr_name + "-p" + std::to_string((idx + 1) * 2);
-      cluster_devices[i]["tor-up"].Add(tor_port);
-      cluster_devices[i]["aggr-down"].Add(aggr_port);
-      globalDeviceMap[tor_dev_name] = tor_port;
-      globalDeviceMap[aggr_dev_name] = aggr_port;
-      globalPeerMap[tor_dev_name] = aggr_dev_name;
-      globalPeerMap[aggr_dev_name] = tor_dev_name;
-    }
-
-    // Whether to enable pcap trace on ports specified in `pcap_intra_fqdn`.
-    if (tracing && (!useMpi || systemId == i) && pcap_intra_fqdn.count(i + 1)) {
-      for (auto &&fqdn : pcap_intra_fqdn[i + 1]) {
-        if (!globalDeviceMap.count(fqdn)) {
-          NS_LOG_ERROR(fqdn << " not found in globalDeviceMap!");
-          continue;
-        }
-        intraClusterLink.EnablePcap(outPrefix + fqdn + ".pcap",
-                                    globalDeviceMap[fqdn], true, true);
+  }
+  // Iterates over each node again and connects it to neighbors.
+  PointToPointHelper link;
+  link.SetDeviceAttribute("DataRate", StringValue("100Gbps"));
+  link.SetChannelAttribute("Delay", StringValue("20us"));
+  for (int x = 0; x < N; ++x) {
+    for (int y = 0; y < N; ++y) {
+      for (int z = 0; z < N; ++z) {
+        Ptr<Node> node = coordNodeMap[{x, y, z}];
+        // Ports on x-axis are "toy1-x0-y1-z0-x-", "toy1-x0-y1-z0-x+". We only
+        // connect to the plus direction to avoid double connection.
+        Ptr<Node> x_peer = coordNodeMap[{wrapCoord(x + 1, N), y, z}];
+        NetDeviceContainer x_link = link.Install(node, x_peer);
+        Ptr<NetDevice> self_if_x = x_link.Get(0);
+        Ptr<NetDevice> peer_if_x = x_link.Get(1);
+        coordDeviceMap[{x, y, z}]["x+"] = self_if_x;
+        coordDeviceMap[{wrapCoord(x + 1, N), y, z}]["x-"] = peer_if_x;
+        // Ports on y-axis are "toy1-x0-y1-z0-y-", "toy1-x0-y1-z0-y+". We only
+        // connect to the plus direction to avoid double connection.
+        Ptr<Node> y_peer = coordNodeMap[{x, wrapCoord(y + 1, N), z}];
+        NetDeviceContainer y_link = link.Install(node, y_peer);
+        Ptr<NetDevice> self_if_y = y_link.Get(0);
+        Ptr<NetDevice> peer_if_y = y_link.Get(1);
+        coordDeviceMap[{x, y, z}]["y+"] = self_if_y;
+        coordDeviceMap[{x, wrapCoord(y + 1, N), z}]["y-"] = peer_if_y;
+        // Ports on z-axis are "toy1-x0-y1-z0-z-", "toy1-x0-y1-z0-z+". We only
+        // connect to the plus direction to avoid double connection.
+        Ptr<Node> z_peer = coordNodeMap[{x, y, wrapCoord(z + 1, N)}];
+        NetDeviceContainer z_link = link.Install(node, z_peer);
+        Ptr<NetDevice> self_if_z = z_link.Get(0);
+        Ptr<NetDevice> peer_if_z = z_link.Get(1);
+        coordDeviceMap[{x, y, z}]["z+"] = self_if_z;
+        coordDeviceMap[{x, y, wrapCoord(z + 1, N)}]["z-"] = peer_if_z;
       }
     }
   }
 
-  // Now that all clusters are constructed, inter-connects them as a full mesh.
-  for (int i = 0; i < NUM_CLUSTER; ++i) {
-    std::string aggr_name = NET + "-c" + std::to_string(i + 1) + "-ab1";
-    Ptr<Node> aggr_sw = globalNodeMap[aggr_name];
-    for (int j = i + 1; j < NUM_CLUSTER; ++j) {
-      std::string peer_aggr_name = NET + "-c" + std::to_string(j + 1) + "-ab1";
-      Ptr<Node> peer_aggr_sw = globalNodeMap[peer_aggr_name];
-
-      // Inter-cluster links may not have the same speed, actual speed is
-      // determined by auto-negotiation.
-      PointToPointHelper interClusterLink;
-      // Performs speed auto negotiation.
-      int self_gen_id = getClusterGenByIndex(i + 1, GEN_VEC);
-      int peer_gen_id = getClusterGenByIndex(j + 1, GEN_VEC);
-      // Invalid generation id, abort.
-      if (self_gen_id < 0 || peer_gen_id < 0) {
-        NS_LOG_ERROR("Invalid cluster index. Self gen id "
-                     << self_gen_id << ", peer gen id " << peer_gen_id);
-        return -1;
+  // Whether to enable pcap trace on ports specified in `pcap_ifs`.
+  if (tracing) {
+    for (auto &[x, y, z, dir] : pcap_ifs) {
+      // Device name is like "toy1-x0-y1-z0-z+".
+      std::string fqdn = NET + "-x" + std::to_string(x) + "-y" +
+                         std::to_string(y) + "-z" + std::to_string(z) + "-" +
+                         dir;
+      if (!coordDeviceMap.count({x, y, z}) ||
+          !coordDeviceMap[{x, y, z}].count(dir)) {
+        NS_LOG_ERROR(fqdn << " not found!");
+        continue;
       }
-      interClusterLink.SetDeviceAttribute(
-          "DataRate",
-          StringValue(std::to_string(std::min(SPEED_MAP[self_gen_id],
-                                              SPEED_MAP[peer_gen_id])) +
-                      "Gbps"));
-      interClusterLink.SetChannelAttribute("Delay", StringValue("20us"));
-
-      NetDeviceContainer link = interClusterLink.Install(aggr_sw, peer_aggr_sw);
-      Ptr<NetDevice> self_port = link.Get(0);
-      Ptr<NetDevice> peer_port = link.Get(1);
-      std::string self_port_name =
-          aggr_name + "-p" + std::to_string(cluster_dcn_ports[i].front());
-      cluster_dcn_ports[i].pop();
-      std::string peer_port_name =
-          peer_aggr_name + "-p" + std::to_string(cluster_dcn_ports[j].front());
-      cluster_dcn_ports[j].pop();
-      cluster_devices[i]["aggr-up"].Add(self_port);
-      cluster_devices[j]["aggr-up"].Add(peer_port);
-      globalDeviceMap[self_port_name] = self_port;
-      globalDeviceMap[peer_port_name] = peer_port;
-      globalPeerMap[self_port_name] = peer_port_name;
-      globalPeerMap[peer_port_name] = self_port_name;
-      globalDcnLinkMap[std::make_pair(aggr_name, peer_aggr_name)].push_back(
-          std::make_pair(self_port_name, peer_port_name));
-      globalDcnLinkMap[std::make_pair(peer_aggr_name, aggr_name)].push_back(
-          std::make_pair(peer_port_name, self_port_name));
-
-      // Whether to enable pcap trace on ports specified in `pcap_inter_fqdn`.
-      if (tracing && (!useMpi || systemId == i)) {
-        if (pcap_inter_fqdn.count(i + 1) &&
-            pcap_inter_fqdn[i + 1].count(self_port_name)) {
-          interClusterLink.EnablePcap(outPrefix + self_port_name + ".pcap",
-                                      self_port, true, true);
-        }
-        if (pcap_inter_fqdn.count(j + 1) &&
-            pcap_inter_fqdn[j + 1].count(peer_port_name)) {
-          interClusterLink.EnablePcap(outPrefix + peer_port_name + ".pcap",
-                                      peer_port, true, true);
-        }
-      }
+      link.EnablePcap(outPrefix + fqdn + ".pcap",
+                      coordDeviceMap[{x, y, z}][dir], true, true);
     }
   }
-  NS_LOG_INFO(globalNodeMap.size() << " nodes created in total.");
+
+  NS_LOG_INFO(coordNodeMap.size() << " nodes created in total.");
 
   // =======================
   // ==                   ==
@@ -333,6 +245,7 @@ int main(int argc, char *argv[]) {
   // ==                   ==
   // =======================
 
+  /*
   NS_LOG_INFO("Configure routing.");
   // Sets up the network stacks and routing.
   InternetStackHelper stack;
@@ -496,13 +409,6 @@ int main(int argc, char *argv[]) {
     clientApps.Add(client);
   }
 
-  // Flow monitor. Only install FlowMonitor if verbose is true.
-  Ptr<FlowMonitor> flowMonitor;
-  FlowMonitorHelper flowHelper;
-  if (verbose) {
-    flowMonitor = flowHelper.InstallAll();
-  }
-
   // Dumps the routing table of requested nodes for debugging. In a distributed
   // (MPI) use case, only the process responsible for the node gets to dump the
   // routing table. This avoids file access contention.
@@ -517,25 +423,13 @@ int main(int argc, char *argv[]) {
                                     std::ios::out));
   }
 
+  */
   NS_LOG_INFO("Run simulation.");
   Simulator::Stop(MilliSeconds(10));
   Simulator::Run();
   NS_LOG_INFO("Simulation done.");
 
-  // Dump flowlet table usage.
-  if (flowlet) {
-    // If MPI is enabled, every process should write to its dedicated file.
-    Ptr<OutputStreamWrapper> fstream = Create<OutputStreamWrapper>(
-        outPrefix + "flowlet-proc" + std::to_string(systemId) + ".csv",
-        std::ios::app);
-    for (const auto &[name, node] : globalNodeMap) {
-      Ptr<Ipv4StaticRouting> staticRouting =
-          ipv4RoutingHelper.GetStaticRouting(node->GetObject<Ipv4>());
-      *fstream->GetStream()
-          << name << "," << staticRouting->GetFlowletTableSize() << std::endl;
-    }
-  }
-
+  /*
   // Dump estimate FCT if simulation terminates early.
   Ptr<OutputStreamWrapper> fct_stream = Create<OutputStreamWrapper>(
       outPrefix + "fctEstimate-proc" + std::to_string(systemId) + ".csv",
@@ -550,14 +444,9 @@ int main(int argc, char *argv[]) {
     NS_LOG_INFO("FCT estimate " << fct << " nsec.");
     *fct_stream->GetStream() << fct << std::endl;
   }
+  */
 
-  // Dump flow stats.
-  if (verbose) {
-    flowMonitor->SerializeToXmlFile(outPrefix + "3D-Torus.xml", true, true);
-  }
   Simulator::Destroy();
 
-  // Exit the MPI execution environment
-  MpiInterface::Disable();
   return 0;
 }
