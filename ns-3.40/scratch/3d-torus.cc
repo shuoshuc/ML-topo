@@ -42,26 +42,57 @@
 #include <utility>
 #include <vector>
 
+enum Direction_t {
+  X_MINUS = 0,
+  X_PLUS = 1,
+  Y_MINUS = 2,
+  Y_PLUS = 3,
+  Z_MINUS = 4,
+  Z_PLUS = 5,
+};
+static const Direction_t DIRECTION[] = {X_MINUS, X_PLUS,  Y_MINUS,
+                                        Y_PLUS,  Z_MINUS, Z_PLUS};
+
 using namespace ns3;
 // Maps from a tuple-format coordinate <x, y, z> to a Node ptr.
 // e.g., <0, 1, 0>: Ptr<node>
 using CoordNodeMap =
     std::map<std::tuple<uint32_t, uint32_t, uint32_t>, Ptr<Node>>;
-// Maps from a tuple-format coordinate <x, y, z> to a NetDeviceContainer with 6
-// devices. e.g., <0, 1, 0>: {'x+': Ptr<dev1>, 'x-': Ptr<dev2>, ...}
-using CoordDeviceMap = std::map<std::tuple<uint32_t, uint32_t, uint32_t>,
-                                std::map<std::string, Ptr<NetDevice>>>;
-// Maps from a tuple-format coordinate <x, y, z> (with up/down facing) to an
-// Ipv4InterfaceContainer filled with interfaces.
-// e.g., 'tor-up': {if1, if2, ...}
+// Maps from a tuple-format coordinate <x, y, z, direction> to a NetDevice.
+// e.g., <0, 1, 0, x+>: Ptr<dev1>
+using CoordDeviceMap =
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t, Direction_t>,
+             Ptr<NetDevice>>;
+// Maps from a tuple-format coordinate <x, y, z, direction> to an
+// Ipv4Interface. e.g., <0, 1, 0, x+>: {if1}
 using CoordInterfaceMap =
-    std::map<std::tuple<uint32_t, uint32_t, uint32_t>,
-             std::map<std::string, Ipv4InterfaceContainer>>;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t, Direction_t>,
+             std::pair<Ptr<Ipv4>, uint32_t>>;
 
 NS_LOG_COMPONENT_DEFINE("3D-Torus");
 
 // Returns the wrapped-around coordinate, e.g., 0 - 1 = -1 => 2 (when range=3).
 int wrapCoord(int coord, int range) { return (range + coord % range) % range; }
+
+// Converts a direction enum to a string.
+std::string dir2str(Direction_t dir) {
+  switch (dir) {
+  case X_MINUS:
+    return std::string("x-");
+  case X_PLUS:
+    return std::string("x+");
+  case Y_MINUS:
+    return std::string("y-");
+  case Y_PLUS:
+    return std::string("y+");
+  case Z_MINUS:
+    return std::string("z-");
+  case Z_PLUS:
+    return std::string("z+");
+  default:
+    return std::string("");
+  }
+}
 
 // Callback function to compute flow completion time.
 void calcFCT(Ptr<OutputStreamWrapper> stream, bool filter, const Time &start,
@@ -114,9 +145,9 @@ int main(int argc, char *argv[]) {
   // For 3D Torus, the degree of each node is 6.
   int DEGREE = 6;
   // The corrdinates of devices which should enable pcap trace on.
-  std::set<std::tuple<uint32_t, uint32_t, uint32_t, std::string>> pcap_ifs{
-      //{0, 1, 0, "x+"},
-      //{1, 1, 0, "z-"},
+  std::set<std::tuple<uint32_t, uint32_t, uint32_t, Direction_t>> pcap_ifs{
+      //{0, 1, 0, X_PLUS},
+      //{1, 1, 0, Z_MINUS},
   };
   // A vector of node names where the routing table of each should be dumped.
   std::vector<std::string> subscribed_routing_tables{};
@@ -173,7 +204,7 @@ int main(int argc, char *argv[]) {
   NS_LOG_INFO("Create topology.");
   CoordNodeMap coordNodeMap;
   CoordDeviceMap coordDeviceMap;
-  // std::map<std::string, std::pair<Ptr<Ipv4>, uint32_t>> globalInterfaceMap;
+  CoordInterfaceMap coordInterfaceMap;
 
   // Iterates over each node, tracks them separately using their FQDNs.
   for (int x = 0; x < N; ++x) {
@@ -186,8 +217,8 @@ int main(int argc, char *argv[]) {
   }
   // Iterates over each node again and connects it to neighbors.
   PointToPointHelper link;
-  link.SetDeviceAttribute("DataRate", StringValue("100Gbps"));
-  link.SetChannelAttribute("Delay", StringValue("20us"));
+  link.SetDeviceAttribute("DataRate", StringValue("400Gbps"));
+  link.SetChannelAttribute("Delay", StringValue("1us"));
   for (int x = 0; x < N; ++x) {
     for (int y = 0; y < N; ++y) {
       for (int z = 0; z < N; ++z) {
@@ -198,24 +229,24 @@ int main(int argc, char *argv[]) {
         NetDeviceContainer x_link = link.Install(node, x_peer);
         Ptr<NetDevice> self_if_x = x_link.Get(0);
         Ptr<NetDevice> peer_if_x = x_link.Get(1);
-        coordDeviceMap[{x, y, z}]["x+"] = self_if_x;
-        coordDeviceMap[{wrapCoord(x + 1, N), y, z}]["x-"] = peer_if_x;
+        coordDeviceMap[{x, y, z, X_PLUS}] = self_if_x;
+        coordDeviceMap[{wrapCoord(x + 1, N), y, z, X_MINUS}] = peer_if_x;
         // Ports on y-axis are "toy1-x0-y1-z0-y-", "toy1-x0-y1-z0-y+". We only
         // connect to the plus direction to avoid double connection.
         Ptr<Node> y_peer = coordNodeMap[{x, wrapCoord(y + 1, N), z}];
         NetDeviceContainer y_link = link.Install(node, y_peer);
         Ptr<NetDevice> self_if_y = y_link.Get(0);
         Ptr<NetDevice> peer_if_y = y_link.Get(1);
-        coordDeviceMap[{x, y, z}]["y+"] = self_if_y;
-        coordDeviceMap[{x, wrapCoord(y + 1, N), z}]["y-"] = peer_if_y;
+        coordDeviceMap[{x, y, z, Y_PLUS}] = self_if_y;
+        coordDeviceMap[{x, wrapCoord(y + 1, N), z, Y_MINUS}] = peer_if_y;
         // Ports on z-axis are "toy1-x0-y1-z0-z-", "toy1-x0-y1-z0-z+". We only
         // connect to the plus direction to avoid double connection.
         Ptr<Node> z_peer = coordNodeMap[{x, y, wrapCoord(z + 1, N)}];
         NetDeviceContainer z_link = link.Install(node, z_peer);
         Ptr<NetDevice> self_if_z = z_link.Get(0);
         Ptr<NetDevice> peer_if_z = z_link.Get(1);
-        coordDeviceMap[{x, y, z}]["z+"] = self_if_z;
-        coordDeviceMap[{x, y, wrapCoord(z + 1, N)}]["z-"] = peer_if_z;
+        coordDeviceMap[{x, y, z, Z_PLUS}] = self_if_z;
+        coordDeviceMap[{x, y, wrapCoord(z + 1, N), Z_MINUS}] = peer_if_z;
       }
     }
   }
@@ -226,14 +257,13 @@ int main(int argc, char *argv[]) {
       // Device name is like "toy1-x0-y1-z0-z+".
       std::string fqdn = NET + "-x" + std::to_string(x) + "-y" +
                          std::to_string(y) + "-z" + std::to_string(z) + "-" +
-                         dir;
-      if (!coordDeviceMap.count({x, y, z}) ||
-          !coordDeviceMap[{x, y, z}].count(dir)) {
+                         dir2str(dir);
+      if (!coordDeviceMap.count({x, y, z, dir})) {
         NS_LOG_ERROR(fqdn << " not found!");
         continue;
       }
       link.EnablePcap(outPrefix + fqdn + ".pcap",
-                      coordDeviceMap[{x, y, z}][dir], true, true);
+                      coordDeviceMap[{x, y, z, dir}], true, true);
     }
   }
 
@@ -245,54 +275,34 @@ int main(int argc, char *argv[]) {
   // ==                   ==
   // =======================
 
-  /*
   NS_LOG_INFO("Configure routing.");
   // Sets up the network stacks and routing.
   InternetStackHelper stack;
   stack.InstallAll();
 
   // Assigns IP addresses to each interface.
-  for (int i = 0; i < NUM_CLUSTER; ++i) {
-    // Intra-cluster interfaces are assigned base address 10.{cluster id}.1.0
-    Ipv4AddressHelper intraClusterAddress;
-    std::string intraBaseIP = "10." + std::to_string(i + 1) + ".1.0";
-    // ToR up-facing interfaces are assigned address 10.{cluster id}.1.{tor id}
-    intraClusterAddress.SetBase(intraBaseIP.c_str(), "255.255.255.0");
-    Ipv4InterfaceContainer torUpIfs =
-        intraClusterAddress.Assign(cluster_devices[i]["tor-up"]);
-    cluster_ifs[i]["tor-up"].Add(torUpIfs);
-    // AggrBlock down-facing interfaces are assigned address
-    // 10.{cluster id}.1.{100 + tor id}
-    intraClusterAddress.SetBase(intraBaseIP.c_str(), "255.255.255.0",
-                                "0.0.0.101");
-    Ipv4InterfaceContainer aggrDownIfs =
-        intraClusterAddress.Assign(cluster_devices[i]["aggr-down"]);
-    cluster_ifs[i]["aggr-down"].Add(aggrDownIfs);
-    // Establishes global interface map.
-    for (int idx = 0; idx < NUM_TOR; ++idx) {
-      std::string tor_if_name = NET + "-c" + std::to_string(i + 1) + "-t" +
-                                std::to_string(idx + 1) + "-p1";
-      std::string aggr_if_name = NET + "-c" + std::to_string(i + 1) + "-ab1-p" +
-                                 std::to_string((idx + 1) * 2);
-      globalInterfaceMap[tor_if_name] = torUpIfs.Get(idx);
-      globalInterfaceMap[aggr_if_name] = aggrDownIfs.Get(idx);
-    }
-    // Inter-cluster interfaces are assigned IP address:
-    // 10.100.{cluster id}.{port id / 2 + 1}
-    Ipv4AddressHelper dcnAddress;
-    std::string startIP = "0.0." + std::to_string(i + 1) + ".1";
-    dcnAddress.SetBase("10.100.0.0", "255.255.0.0", startIP.c_str());
-    Ipv4InterfaceContainer dcnIfs =
-        dcnAddress.Assign(cluster_devices[i]["aggr-up"]);
-    cluster_ifs[i]["aggr-up"].Add(dcnIfs);
-    // Establishes global interface map.
-    for (int p = 0; p < NUM_AGGR_PORTS / 2; ++p) {
-      std::string dcn_if_name = NET + "-c" + std::to_string(i + 1) + "-ab1-p" +
-                                std::to_string(p * 2 + 1);
-      globalInterfaceMap[dcn_if_name] = dcnIfs.Get(p);
+  Ipv4AddressHelper ipv4Addr;
+  for (int x = 0; x < N; ++x) {
+    for (int y = 0; y < N; ++y) {
+      for (int z = 0; z < N; ++z) {
+        // Interface to IP mapping: 1xx.1yy.1zz.{if}, where 1 means x-, 2 means
+        // x+, 3 means y-, 4 means y+, 5 means z-, 6 means z+. This is assuming
+        // N of each dimension is no greater than 99.
+        for (auto direction : DIRECTION) {
+          std::string addr = std::to_string(x + 100) + "." +
+                             std::to_string(y + 100) + "." +
+                             std::to_string(z + 100) + "." +
+                             std::to_string(static_cast<int>(direction) + 1);
+          ipv4Addr.SetBase(addr.c_str(), "255.255.255.255", addr.c_str());
+          Ipv4InterfaceContainer interface = ipv4Addr.Assign(
+              NetDeviceContainer(coordDeviceMap[{x, y, z, direction}]));
+          coordInterfaceMap[{x, y, z, direction}] = interface.Get(0);
+        }
+      }
     }
   }
 
+  /*
   // Builds static host routes for all nodes.
   Ipv4StaticRoutingHelper ipv4RoutingHelper;
   for (int i = 0; i < NUM_CLUSTER; ++i) {
