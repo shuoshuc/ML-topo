@@ -94,6 +94,18 @@ std::string dir2str(Direction_t dir) {
   }
 }
 
+// Builds an FQDN string out of coordinates.
+std::string buildFQDN(std::string NET, uint32_t x, uint32_t y, uint32_t z,
+                      Direction_t dir, bool appendDir) {
+  // Device name is like "toy1-x0-y1-z0-z+".
+  std::string fqdn = NET + "-x" + std::to_string(x) + "-y" + std::to_string(y) +
+                     "-z" + std::to_string(z);
+  if (appendDir) {
+    fqdn += "-" + dir2str(dir);
+  }
+  return fqdn;
+}
+
 // Callback function to compute flow completion time.
 void calcFCT(Ptr<OutputStreamWrapper> stream, bool filter, const Time &start,
              const Time &end) {
@@ -142,15 +154,16 @@ int main(int argc, char *argv[]) {
   std::string NET = "toy1";
   // Number of nodes on each dimension.
   int N = 16;
-  // For 3D Torus, the degree of each node is 6.
-  int DEGREE = 6;
   // The corrdinates of devices which should enable pcap trace on.
   std::set<std::tuple<uint32_t, uint32_t, uint32_t, Direction_t>> pcap_ifs{
       //{0, 1, 0, X_PLUS},
       //{1, 1, 0, Z_MINUS},
   };
   // A vector of node names where the routing table of each should be dumped.
-  std::vector<std::string> subscribed_routing_tables{};
+  std::vector<std::tuple<uint32_t, uint32_t, uint32_t>>
+      subscribed_routing_tables{
+          // {0, 1, 0},
+      };
 
   // If true, filters out all negative FCT values.
   bool filterFct = true;
@@ -254,10 +267,7 @@ int main(int argc, char *argv[]) {
   // Whether to enable pcap trace on ports specified in `pcap_ifs`.
   if (tracing) {
     for (auto &[x, y, z, dir] : pcap_ifs) {
-      // Device name is like "toy1-x0-y1-z0-z+".
-      std::string fqdn = NET + "-x" + std::to_string(x) + "-y" +
-                         std::to_string(y) + "-z" + std::to_string(z) + "-" +
-                         dir2str(dir);
+      std::string fqdn = buildFQDN(NET, x, y, z, dir, true);
       if (!coordDeviceMap.count({x, y, z, dir})) {
         NS_LOG_ERROR(fqdn << " not found!");
         continue;
@@ -302,57 +312,21 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  /*
-  // Builds static host routes for all nodes.
+  // Builds static routes for all nodes.
   Ipv4StaticRoutingHelper ipv4RoutingHelper;
-  for (int i = 0; i < NUM_CLUSTER; ++i) {
-    Ptr<Node> aggr = cluster_nodes[i]["aggr"].Get(0);
-    wipeStaticRoutingTable(aggr, ipv4RoutingHelper);
-    installLocalAndDefaultRoute(aggr, ipv4RoutingHelper, false);
-    // Builds intra-cluster routing, including routes on ToRs and host routes on
-    // aggregation block.
-    NodeContainer &tors = cluster_nodes[i]["tor"];
-    for (uint32_t j = 0; j < tors.GetN(); ++j) {
-      wipeStaticRoutingTable(tors.Get(j), ipv4RoutingHelper);
-      installLocalAndDefaultRoute(tors.Get(j), ipv4RoutingHelper);
-      // Finds the peer port of each ToR, this is the egress to reach that ToR.
-      // Adds host routes on the aggregation block accordingly.
-      std::string tor_egress_port = NET + "-c" + std::to_string(i + 1) + "-t" +
-                                    std::to_string(j + 1) + "-p1";
-      uint32_t aggr_if_id =
-          globalDeviceMap[globalPeerMap[tor_egress_port]]->GetIfIndex() + 1;
-      Ipv4Address torAddr =
-          globalInterfaceMap[tor_egress_port]
-              .first->GetAddress(globalInterfaceMap[tor_egress_port].second, 0)
-              .GetLocal();
-      Ptr<Ipv4StaticRouting> staticRouting =
-          ipv4RoutingHelper.GetStaticRouting(aggr->GetObject<Ipv4>());
-      // Host routes are always /32.
-      staticRouting->AddNetworkRouteTo(torAddr, Ipv4Mask("/32"), aggr_if_id);
-    }
-  }
-
-  // This part builds the inter-cluster TE implementation based on pre-reduced
-  // group weights.
-  TEImpl te = readTEImpl(teInput, NUM_TOR, NUM_AGGR_PORTS);
-  for (const auto &te_row : te) {
-    uint32_t group_type = std::get<0>(te_row);
-    std::string src = std::get<1>(te_row);
-    std::string dst = std::get<2>(te_row);
-    Ipv4Address dst_prefix = std::get<3>(te_row);
-    std::vector<int> group = std::get<4>(te_row);
-    // Looks up the DCN egress port that directly connects the src and dst. If
-    // there are more than 1 direct connects, simply use the first one. This
-    // default egress port should really be a last resort in case the
-    // installed group does not work.
-    std::vector<Link> links = globalDcnLinkMap[std::make_pair(src, dst)];
-    uint32_t direct_if_id = globalDeviceMap[links[0].first]->GetIfIndex() + 1;
-
-    Ptr<Node> node = globalNodeMap[src];
+  for (const auto &[tup, node_ptr] : coordNodeMap) {
+    wipeStaticRoutingTable(node_ptr, ipv4RoutingHelper);
+    /*
+    // x, y, z, dir need to be the coordinates of the interface.
+    uint32_t egress_id = coordDeviceMap[{x, y, z, dir}]->GetIfIndex() + 1;
+    Ipv4Address addr =
+        coordInterfaceMap[{x, y, z, dir}]
+            .first->GetAddress(coordInterfaceMap[{x, y, z, dir}].second, 0)
+            .GetLocal();
     Ptr<Ipv4StaticRouting> staticRouting =
-        ipv4RoutingHelper.GetStaticRouting(node->GetObject<Ipv4>());
-    staticRouting->AddNetworkRouteTo(dst_prefix, Ipv4Mask("/24"), direct_if_id,
-                                     group_type, group);
+        ipv4RoutingHelper.GetStaticRouting(aggr->GetObject<Ipv4>());
+    staticRouting->AddNetworkRouteTo(addr, Ipv4Mask("/32"), egress_id);
+    */
   }
 
   // Ipv4GlobalRoutingHelper::PopulateRoutingTables();
@@ -365,6 +339,7 @@ int main(int argc, char *argv[]) {
 
   NS_LOG_INFO("Generate traffic.");
 
+  /*
   // Load in the TM file.
   TrafficMatrix TM = readTM(trafficInput);
   NS_LOG_INFO("Trace entries: " << TM.size());
@@ -418,22 +393,20 @@ int main(int argc, char *argv[]) {
     client.Start(NanoSeconds(start_time));
     clientApps.Add(client);
   }
+  */
 
-  // Dumps the routing table of requested nodes for debugging. In a distributed
-  // (MPI) use case, only the process responsible for the node gets to dump the
-  // routing table. This avoids file access contention.
-  Ipv4GlobalRoutingHelper gRouting;
-  for (const auto &node : subscribed_routing_tables) {
-    if (useMpi && ((int)globalNodeMap[node]->GetSystemId() != systemId)) {
-      continue;
-    }
-    gRouting.PrintRoutingTableAt(
-        MilliSeconds(0), globalNodeMap[node],
-        Create<OutputStreamWrapper>(outPrefix + node + ".route",
+  // Dumps the routing table of requested nodes for debugging.
+  Ipv4StaticRoutingHelper routing;
+  for (const auto &[x, y, z] : subscribed_routing_tables) {
+    // The direction argument is always hardcoded to be x-, but it does not
+    // matter as we only want to construct the node name.
+    std::string fqdn = buildFQDN(NET, x, y, z, X_MINUS, false);
+    routing.PrintRoutingTableAt(
+        MilliSeconds(0), coordNodeMap[{x, y, z}],
+        Create<OutputStreamWrapper>(outPrefix + fqdn + ".route",
                                     std::ios::out));
   }
 
-  */
   NS_LOG_INFO("Run simulation.");
   Simulator::Stop(MilliSeconds(10));
   Simulator::Run();
