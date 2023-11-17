@@ -68,6 +68,11 @@ using CoordDeviceMap =
 using CoordInterfaceMap =
     std::map<std::tuple<uint32_t, uint32_t, uint32_t, Direction_t>,
              std::pair<Ptr<Ipv4>, uint32_t>>;
+// TM row format: <src_x, src_y, src_z, dst_x, dst_y, dst_z, demand, t_start>.
+using TMRow = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+                         uint32_t, uint64_t, uint64_t>;
+// Complete traffic matrix (not in actual matrix format).
+using TrafficMatrix = std::vector<TMRow>;
 
 NS_LOG_COMPONENT_DEFINE("3D-Torus");
 
@@ -156,13 +161,13 @@ int main(int argc, char *argv[]) {
   int N = 16;
   // The corrdinates of devices which should enable pcap trace on.
   std::set<std::tuple<uint32_t, uint32_t, uint32_t, Direction_t>> pcap_ifs{
-      //{0, 1, 0, X_PLUS},
-      //{1, 1, 0, Z_MINUS},
+      //{1, 0, 0, X_MINUS},
+      //{0, 0, 0, X_PLUS},
   };
   // A vector of node names where the routing table of each should be dumped.
   std::vector<std::tuple<uint32_t, uint32_t, uint32_t>>
       subscribed_routing_tables{
-          // {0, 1, 0},
+          //{0, 1, 0},
       };
 
   // If true, filters out all negative FCT values.
@@ -316,16 +321,23 @@ int main(int argc, char *argv[]) {
   Ipv4StaticRoutingHelper ipv4RoutingHelper;
   for (const auto &[tup, node_ptr] : coordNodeMap) {
     wipeStaticRoutingTable(node_ptr, ipv4RoutingHelper);
-    /*
-    // x, y, z, dir need to be the coordinates of the interface.
-    uint32_t egress_id = coordDeviceMap[{x, y, z, dir}]->GetIfIndex() + 1;
-    Ipv4Address addr =
-        coordInterfaceMap[{x, y, z, dir}]
-            .first->GetAddress(coordInterfaceMap[{x, y, z, dir}].second, 0)
-            .GetLocal();
     Ptr<Ipv4StaticRouting> staticRouting =
-        ipv4RoutingHelper.GetStaticRouting(aggr->GetObject<Ipv4>());
-    staticRouting->AddNetworkRouteTo(addr, Ipv4Mask("/32"), egress_id);
+        ipv4RoutingHelper.GetStaticRouting(node_ptr->GetObject<Ipv4>());
+    staticRouting->AddNetworkRouteTo(Ipv4Address("0.0.0.0"), Ipv4Mask("/0"), 1);
+    /*
+    uint32_t x = std::get<0>(tup);
+    uint32_t y = std::get<1>(tup);
+    uint32_t z = std::get<2>(tup);
+    for (const auto &dir : DIRECTION) {
+      uint32_t egress_id = coordDeviceMap[{x, y, z, dir}]->GetIfIndex() + 1;
+      Ipv4Address addr =
+          coordInterfaceMap[{x, y, z, dir}]
+              .first->GetAddress(coordInterfaceMap[{x, y, z, dir}].second, 0)
+              .GetLocal();
+      std::cout << "Coordinates (" << x << ", " << y << ", " << z << ", "
+                << dir2str(dir) << "), egress id: " << egress_id << ", addr "
+                << addr << std::endl;
+    }
     */
   }
 
@@ -339,53 +351,50 @@ int main(int argc, char *argv[]) {
 
   NS_LOG_INFO("Generate traffic.");
 
-  /*
   // Load in the TM file.
-  TrafficMatrix TM = readTM(trafficInput);
+  TrafficMatrix TM{{0, 0, 0, 1, 0, 0, 1024000, 0}};
   NS_LOG_INFO("Trace entries: " << TM.size());
 
-  // Creates a packet sink on all ToRs.
+  // Creates a packet sink on all nodes.
   uint16_t port = 50000;
   PacketSinkHelper sinkHelper("ns3::TcpSocketFactory",
                               InetSocketAddress(Ipv4Address::GetAny(), port));
   ApplicationContainer sinkApps;
-  for (int i = 0; i < NUM_CLUSTER; ++i) {
-    // If MPI is enabled, only installs sink in the cluster with a matching
-    // systemId.
-    if (!useMpi || systemId == i) {
-      sinkApps.Add(sinkHelper.Install(cluster_nodes[i]["tor"]));
-    }
+  for (const auto &[tup, node_ptr] : coordNodeMap) {
+    sinkApps.Add(sinkHelper.Install(node_ptr));
   }
   sinkApps.Start(MilliSeconds(0));
 
   // Creates the BulkSend applications to send. Who sends to who, how much and
-  // when to send is determined by the rows in TM.
+  // when to send is determined by the TM.
   ApplicationContainer clientApps;
   // If MPI is enabled, every process should write to its dedicated file.
-  Ptr<OutputStreamWrapper> stream = Create<OutputStreamWrapper>(
-      outPrefix + "fct-proc" + std::to_string(systemId) + ".csv",
-      std::ios::app);
+  Ptr<OutputStreamWrapper> stream =
+      Create<OutputStreamWrapper>(outPrefix + "fct.csv", std::ios::app);
   for (const TMRow &row : TM) {
-    std::string src = std::get<0>(row);
-    int sidx = std::get<1>(row);
-    std::string dst = std::get<2>(row);
-    // int didx = std::get<3>(row);
-    uint64_t flow_size = std::get<4>(row);
-    uint64_t start_time = std::get<5>(row);
-    // If MPI is enabled, only sets up senders in the cluster with a matching
-    // systemId.
-    if (useMpi && (systemId != sidx - 1)) {
-      continue;
-    }
+    uint32_t src_x = std::get<0>(row);
+    uint32_t src_y = std::get<1>(row);
+    uint32_t src_z = std::get<2>(row);
+    uint32_t dst_x = std::get<3>(row);
+    uint32_t dst_y = std::get<4>(row);
+    uint32_t dst_z = std::get<5>(row);
+    uint64_t flow_size = std::get<6>(row);
+    uint64_t start_time = std::get<7>(row);
+    // Each node in a 3D torus has 6 interfaces, each with different IP
+    // address. We only need to know the node to reach, specific interface does
+    // not matter, hence we just always hardcode it to "x-".
     Ipv4Address dstAddr =
-        globalInterfaceMap[dst + "-p1"]
-            .first->GetAddress(globalInterfaceMap[dst + "-p1"].second, 0)
+        coordInterfaceMap[{dst_x, dst_y, dst_z, X_MINUS}]
+            .first
+            ->GetAddress(
+                coordInterfaceMap[{dst_x, dst_y, dst_z, X_MINUS}].second, 0)
             .GetLocal();
     BulkSendHelper clientHelper("ns3::TcpSocketFactory",
                                 InetSocketAddress(dstAddr, port));
     // Set the amount of data to send in bytes.  Zero is unlimited.
     clientHelper.SetAttribute("MaxBytes", UintegerValue(flow_size));
-    ApplicationContainer client = clientHelper.Install(globalNodeMap[src]);
+    ApplicationContainer client =
+        clientHelper.Install(coordNodeMap[{src_x, src_y, src_z}]);
     // Register callback to measure FCT, there is supposed to be only one app
     // in this container.
     client.Get(0)->TraceConnectWithoutContext(
@@ -393,7 +402,6 @@ int main(int argc, char *argv[]) {
     client.Start(NanoSeconds(start_time));
     clientApps.Add(client);
   }
-  */
 
   // Dumps the routing table of requested nodes for debugging.
   Ipv4StaticRoutingHelper routing;
