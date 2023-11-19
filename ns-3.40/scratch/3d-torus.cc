@@ -160,14 +160,12 @@ int main(int argc, char *argv[]) {
   // If true, filters out all negative FCT values.
   bool filterFct = true;
   bool tracing = false;
-  bool verbose = false;
   // Folder to hold all output files.
   std::string outPrefix = "./3d-torus/";
   // Parse command line
   CommandLine cmd(__FILE__);
   cmd.AddValue("tracing", "Enable pcap tracing", tracing);
   cmd.AddValue("filterFct", "Filters negative FCT values", filterFct);
-  cmd.AddValue("verbose", "verbose output", verbose);
   cmd.AddValue("outPrefix", "File path of the output files", outPrefix);
   cmd.Parse(argc, argv);
 
@@ -194,12 +192,6 @@ int main(int argc, char *argv[]) {
 
   Time::SetResolution(Time::NS);
   LogComponentEnable("3D-Torus", (LogLevel)(LOG_LEVEL_INFO | LOG_PREFIX_TIME));
-
-  if (verbose) {
-    LogComponentEnable(
-        "PacketSink",
-        (LogLevel)(LOG_LEVEL_INFO | LOG_PREFIX_NODE | LOG_PREFIX_TIME));
-  }
 
   // =====================
   // ==                 ==
