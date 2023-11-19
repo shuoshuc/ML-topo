@@ -257,7 +257,6 @@ Ptr<Ipv4Route> Ipv4TorusRouting::LookupStatic(Ipv4Address dest,
       shortest_metric = metric;
       Ipv4RoutingTableEntry *route = (j);
       uint32_t interfaceIdx = route->GetInterface();
-      std::cout << "Interface idx " << interfaceIdx << std::endl;
       rtentry = Create<Ipv4Route>();
       rtentry->SetDestination(route->GetDest());
       rtentry->SetSource(
@@ -415,13 +414,6 @@ Ptr<Ipv4Route> Ipv4TorusRouting::RouteOutput(Ptr<Packet> p,
   }
   rtentry = LookupStatic(destination, oif);
   if (rtentry) {
-    /*
-    Ptr<NetDevice> outDev = rtentry->GetOutputDevice();
-
-    std::cout << "Route dst addr " << rtentry->GetDestination() << ", src addr "
-              << rtentry->GetSource() << ", egress if " << outDev->GetIfIndex()
-              << std::endl;
-    */
     sockerr = Socket::ERROR_NOTERROR;
   } else {
     sockerr = Socket::ERROR_NOROUTETOHOST;
@@ -511,31 +503,10 @@ void Ipv4TorusRouting::DoDispose() {
 
 void Ipv4TorusRouting::NotifyInterfaceUp(uint32_t i) {
   NS_LOG_FUNCTION(this << i);
-  // If interface address and network mask have been set, add a route
-  // to the network of the interface (like e.g. ifconfig does on a
-  // Linux box)
-  for (uint32_t j = 0; j < m_ipv4->GetNAddresses(i); j++) {
-    if (m_ipv4->GetAddress(i, j).GetLocal() != Ipv4Address() &&
-        m_ipv4->GetAddress(i, j).GetMask() != Ipv4Mask() &&
-        m_ipv4->GetAddress(i, j).GetMask() != Ipv4Mask::GetOnes()) {
-      AddNetworkRouteTo(m_ipv4->GetAddress(i, j).GetLocal().CombineMask(
-                            m_ipv4->GetAddress(i, j).GetMask()),
-                        m_ipv4->GetAddress(i, j).GetMask(), i);
-    }
-  }
 }
 
 void Ipv4TorusRouting::NotifyInterfaceDown(uint32_t i) {
   NS_LOG_FUNCTION(this << i);
-  // Remove all static routes that are going through this interface
-  for (auto it = m_networkRoutes.begin(); it != m_networkRoutes.end();) {
-    if (it->first->GetInterface() == i) {
-      delete it->first;
-      it = m_networkRoutes.erase(it);
-    } else {
-      it++;
-    }
-  }
 }
 
 void Ipv4TorusRouting::NotifyAddAddress(uint32_t interface,
