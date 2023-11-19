@@ -7,6 +7,7 @@ set(source_files
     helper/ipv4-list-routing-helper.cc
     helper/ipv4-routing-helper.cc
     helper/ipv4-static-routing-helper.cc
+    helper/ipv4-torus-routing-helper.cc
     helper/ipv6-address-helper.cc
     helper/ipv6-interface-container.cc
     helper/ipv6-list-routing-helper.cc
@@ -48,6 +49,7 @@ set(source_files
     model/ipv4-routing-protocol.cc
     model/ipv4-routing-table-entry.cc
     model/ipv4-static-routing.cc
+    model/ipv4-torus-routing.cc
     model/ipv4.cc
     model/ipv6-address-generator.cc
     model/ipv6-autoconfigured-prefix.cc
@@ -138,6 +140,7 @@ set(header_files
     helper/ipv4-list-routing-helper.h
     helper/ipv4-routing-helper.h
     helper/ipv4-static-routing-helper.h
+    helper/ipv4-torus-routing-helper.h
     helper/ipv6-address-helper.h
     helper/ipv6-interface-container.h
     helper/ipv6-list-routing-helper.h
@@ -178,6 +181,7 @@ set(header_files
     model/ipv4-routing-protocol.h
     model/ipv4-routing-table-entry.h
     model/ipv4-static-routing.h
+    model/ipv4-torus-routing.h
     model/ipv4.h
     model/ipv6-address-generator.h
     model/ipv6-end-point-demux.h

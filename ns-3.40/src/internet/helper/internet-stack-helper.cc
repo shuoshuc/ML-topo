@@ -23,6 +23,7 @@
 #include "ipv4-global-routing-helper.h"
 #include "ipv4-list-routing-helper.h"
 #include "ipv4-static-routing-helper.h"
+#include "ipv4-torus-routing-helper.h"
 #include "ipv6-static-routing-helper.h"
 
 #include "ns3/arp-l3-protocol.h"
@@ -132,9 +133,11 @@ InternetStackHelper::Initialize()
     Ipv4StaticRoutingHelper staticRouting;
     Ipv4GlobalRoutingHelper globalRouting;
     Ipv4ListRoutingHelper listRouting;
+    Ipv4TorusRoutingHelper torusRouting;
     Ipv6StaticRoutingHelper staticRoutingv6;
     listRouting.Add(staticRouting, 0);
     listRouting.Add(globalRouting, -10);
+    listRouting.Add(torusRouting, 10);
     SetRoutingHelper(listRouting);
     SetRoutingHelper(staticRoutingv6);
 }

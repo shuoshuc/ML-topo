@@ -24,6 +24,7 @@
 #include "ns3/ipv4-address-helper.h"
 #include "ns3/ipv4-global-routing-helper.h"
 #include "ns3/ipv4-static-routing-helper.h"
+#include "ns3/ipv4-torus-routing-helper.h"
 #include "ns3/network-module.h"
 #include "ns3/on-off-helper.h"
 #include "ns3/packet-sink-helper.h"
@@ -126,25 +127,11 @@ void calcFCT(Ptr<OutputStreamWrapper> stream, bool filter, const Time &start,
 // Wipes the static routing table on the specified node.
 void wipeStaticRoutingTable(Ptr<Node> node,
                             const Ipv4StaticRoutingHelper &ipv4RoutingHelper) {
-  Ptr<Ipv4StaticRouting> staticRouting =
+  Ptr<Ipv4StaticRouting> routing =
       ipv4RoutingHelper.GetStaticRouting(node->GetObject<Ipv4>());
-  while (staticRouting->GetNRoutes()) {
-    staticRouting->RemoveRoute(0);
+  while (routing->GetNRoutes()) {
+    routing->RemoveRoute(0);
   }
-}
-
-// Installs default route and localhost route on the specified node. The node
-// must have at least one egress port. Aggregation block does not have to
-// install default route.
-void installLocalAndDefaultRoute(
-    Ptr<Node> node, const Ipv4StaticRoutingHelper &ipv4RoutingHelper,
-    bool defaultRoute = true) {
-  Ptr<Ipv4StaticRouting> staticRouting =
-      ipv4RoutingHelper.GetStaticRouting(node->GetObject<Ipv4>());
-  if (defaultRoute) {
-    staticRouting->AddNetworkRouteTo(Ipv4Address("0.0.0.0"), Ipv4Mask("/0"), 1);
-  }
-  staticRouting->AddNetworkRouteTo(Ipv4Address("127.0.0.0"), Ipv4Mask("/8"), 0);
 }
 
 int main(int argc, char *argv[]) {
@@ -167,7 +154,7 @@ int main(int argc, char *argv[]) {
   // A vector of node names where the routing table of each should be dumped.
   std::vector<std::tuple<uint32_t, uint32_t, uint32_t>>
       subscribed_routing_tables{
-          //{0, 1, 0},
+          //{0, 0, 0},
       };
 
   // If true, filters out all negative FCT values.
@@ -317,13 +304,14 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  // Builds static routes for all nodes.
-  Ipv4StaticRoutingHelper ipv4RoutingHelper;
+  // Builds routes for all nodes.
+  Ipv4TorusRoutingHelper torusRoutingHelper;
+  Ipv4StaticRoutingHelper staticRoutingHelper;
   for (const auto &[tup, node_ptr] : coordNodeMap) {
-    wipeStaticRoutingTable(node_ptr, ipv4RoutingHelper);
-    Ptr<Ipv4StaticRouting> staticRouting =
-        ipv4RoutingHelper.GetStaticRouting(node_ptr->GetObject<Ipv4>());
-    staticRouting->AddNetworkRouteTo(Ipv4Address("0.0.0.0"), Ipv4Mask("/0"), 1);
+    wipeStaticRoutingTable(node_ptr, staticRoutingHelper);
+    Ptr<Ipv4TorusRouting> torusRouting =
+        torusRoutingHelper.GetTorusRouting(node_ptr->GetObject<Ipv4>());
+    torusRouting->AddNetworkRouteTo(Ipv4Address("0.0.0.0"), Ipv4Mask("/0"), 1);
     /*
     uint32_t x = std::get<0>(tup);
     uint32_t y = std::get<1>(tup);
