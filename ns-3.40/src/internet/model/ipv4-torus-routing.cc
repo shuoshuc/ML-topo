@@ -200,8 +200,8 @@ bool Ipv4TorusRouting::LookupRoute(const Ipv4RoutingTableEntry &route,
   return false;
 }
 
-Ptr<Ipv4Route> Ipv4TorusRouting::LookupStatic(Ipv4Address dest,
-                                              Ptr<NetDevice> oif) {
+Ptr<Ipv4Route> Ipv4TorusRouting::LookupRoute(Ipv4Address dest,
+                                             Ptr<NetDevice> oif) {
   NS_LOG_FUNCTION(this << dest << " " << oif);
   Ptr<Ipv4Route> rtentry = nullptr;
   uint16_t longest_mask = 0;
@@ -327,7 +327,7 @@ uint32_t Ipv4TorusRouting::GetNRoutes() const {
 
 Ipv4RoutingTableEntry Ipv4TorusRouting::GetDefaultRoute() {
   NS_LOG_FUNCTION(this);
-  // Basically a repeat of LookupStatic, retained for backward compatibility
+  // Basically a repeat of LookupRoute, retained for backward compatibility
   Ipv4Address dest("0.0.0.0");
   uint32_t shortest_metric = 0xffffffff;
   Ipv4RoutingTableEntry *result = nullptr;
@@ -409,10 +409,10 @@ Ptr<Ipv4Route> Ipv4TorusRouting::RouteOutput(Ptr<Packet> p,
     // possible to source multicast datagrams on multiple interfaces.
     // This is a well-known property of sockets implementation on
     // many Unix variants.
-    // So, we just log it and fall through to LookupStatic ()
+    // So, we just log it and fall through to LookupRoute()
     NS_LOG_LOGIC("RouteOutput()::Multicast destination");
   }
-  rtentry = LookupStatic(destination, oif);
+  rtentry = LookupRoute(destination, oif);
   if (rtentry) {
     sockerr = Socket::ERROR_NOTERROR;
   } else {
@@ -474,7 +474,7 @@ bool Ipv4TorusRouting::RouteInput(
     return true;
   }
   // Next, try to find a route
-  Ptr<Ipv4Route> rtentry = LookupStatic(ipHeader.GetDestination());
+  Ptr<Ipv4Route> rtentry = LookupRoute(ipHeader.GetDestination());
   if (rtentry) {
     NS_LOG_LOGIC("Found unicast destination- calling unicast callback");
     ucb(rtentry, p, ipHeader); // unicast forwarding callback

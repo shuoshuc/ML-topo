@@ -161,7 +161,7 @@ public:
    * packet.
    *
    * If the default route is set, it is returned as the selected route from
-   * LookupStatic irrespective of destination address if no specific route is
+   * LookupRoute irrespective of destination address if no specific route is
    * found.
    *
    * \param nextHop The Ipv4Address to send packets to in the hope that they
@@ -400,7 +400,7 @@ private:
    * \param oif output interface if any (put 0 otherwise)
    * \return Ipv4Route to route the packet to reach dest address
    */
-  Ptr<Ipv4Route> LookupStatic(Ipv4Address dest, Ptr<NetDevice> oif = nullptr);
+  Ptr<Ipv4Route> LookupRoute(Ipv4Address dest, Ptr<NetDevice> oif = nullptr);
 
   /**
    * \brief Lookup in the multicast forwarding table for destination.
