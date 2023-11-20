@@ -270,12 +270,65 @@ Ptr<Ipv4Route> Ipv4TorusRouting::ComputeRoute(const Ipv4Header &header,
     }
   }
   if (rtentry) {
+    // Gets the address of interface 1 on the current node and uses it as the
+    // src address for routing to the dst.
+    auto [src_x, src_y, src_z] =
+        UnpackCoordinates(m_ipv4->GetAddress(1, 0).GetLocal());
+    auto [dst_x, dst_y, dst_z] = UnpackCoordinates(dest);
+    // Follow static Manhattan routing, i.e., if src_x != dst_x, send packet
+    // along the x-axis, else send along y-axis, otherwise send along z-axis.
+    uint32_t interfaceIdx = 0;
+    // Dst is on the x- side of src.
+    if (dst_x - src_x < 0) {
+      interfaceIdx = 1;
+    }
+    // Dst is on the x+ side of src.
+    else if (dst_x - src_x > 0) {
+      interfaceIdx = 2;
+    }
+    // Dst is on the y- side of src.
+    else if (dst_y - src_y < 0) {
+      interfaceIdx = 3;
+    }
+    // Dst is on the y+ side of src.
+    else if (dst_y - src_y > 0) {
+      interfaceIdx = 4;
+    }
+    // Dst is on the z- side of src.
+    else if (dst_z - src_z < 0) {
+      interfaceIdx = 5;
+    }
+    // Dst is on the z+ side of src.
+    else if (dst_z - src_z > 0) {
+      interfaceIdx = 6;
+    }
+    rtentry->SetSource(m_ipv4->SourceAddressSelection(
+        interfaceIdx, rtentry->GetDestination()));
+    rtentry->SetOutputDevice(m_ipv4->GetNetDevice(interfaceIdx));
+
+    NS_LOG_DEBUG("Static Torus routing ("
+                 << src_x << ", " << src_y << ", " << src_z << ") -> (" << dst_x
+                 << ", " << dst_y << ", " << dst_z << ") egress via interface "
+                 << interfaceIdx);
+
     NS_LOG_LOGIC("Matching route via " << rtentry->GetGateway()
                                        << " at the end");
   } else {
     NS_LOG_LOGIC("No matching route to " << dest << " found");
   }
   return rtentry;
+}
+
+std::tuple<int, int, int>
+Ipv4TorusRouting::UnpackCoordinates(const Ipv4Address &addr) {
+  int x =
+      ((addr.CombineMask(Ipv4Mask("255.0.0.0")).Get() >> (8 * 3)) & 0xff) - 100;
+  int y =
+      ((addr.CombineMask(Ipv4Mask("0.255.0.0")).Get() >> (8 * 2)) & 0xff) - 100;
+  int z =
+      ((addr.CombineMask(Ipv4Mask("0.0.255.0")).Get() >> (8 * 1)) & 0xff) - 100;
+
+  return std::make_tuple(x, y, z);
 }
 
 Ptr<Ipv4MulticastRoute> Ipv4TorusRouting::LookupStatic(Ipv4Address origin,

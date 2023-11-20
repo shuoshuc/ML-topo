@@ -30,6 +30,7 @@
 
 #include <list>
 #include <stdint.h>
+#include <tuple>
 #include <utility>
 
 namespace ns3 {
@@ -402,6 +403,13 @@ private:
    */
   Ptr<Ipv4Route> ComputeRoute(const Ipv4Header &header,
                               Ptr<NetDevice> oif = nullptr);
+
+  /**
+   * \brief Unpacks the x-y-z coordinates from the given address.
+   * \param addr Ipv4 address
+   * \return A tuple of x, y, z.
+   */
+  std::tuple<int, int, int> UnpackCoordinates(const Ipv4Address &addr);
 
   /**
    * \brief Lookup in the multicast forwarding table for destination.

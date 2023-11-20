@@ -22,11 +22,9 @@
 #include "ns3/core-module.h"
 #include "ns3/internet-stack-helper.h"
 #include "ns3/ipv4-address-helper.h"
-#include "ns3/ipv4-global-routing-helper.h"
 #include "ns3/ipv4-static-routing-helper.h"
 #include "ns3/ipv4-torus-routing-helper.h"
 #include "ns3/network-module.h"
-#include "ns3/on-off-helper.h"
 #include "ns3/packet-sink-helper.h"
 #include "ns3/point-to-point-helper.h"
 
@@ -305,9 +303,7 @@ int main(int argc, char *argv[]) {
         torusRoutingHelper.GetTorusRouting(node_ptr->GetObject<Ipv4>());
     torusRouting->AddNetworkRouteTo(Ipv4Address("0.0.0.0"), Ipv4Mask("/0"), 1);
     /*
-    uint32_t x = std::get<0>(tup);
-    uint32_t y = std::get<1>(tup);
-    uint32_t z = std::get<2>(tup);
+    auto& [x, y, z] = tup;
     for (const auto &dir : DIRECTION) {
       uint32_t egress_id = coordDeviceMap[{x, y, z, dir}]->GetIfIndex() + 1;
       Ipv4Address addr =
@@ -321,8 +317,6 @@ int main(int argc, char *argv[]) {
     */
   }
 
-  // Ipv4GlobalRoutingHelper::PopulateRoutingTables();
-
   // ======================
   // ==                  ==
   // == Generate traffic ==
@@ -332,7 +326,7 @@ int main(int argc, char *argv[]) {
   NS_LOG_INFO("Generate traffic.");
 
   // Load in the TM file.
-  TrafficMatrix TM{{0, 0, 0, 1, 0, 0, 1024000, 0}};
+  TrafficMatrix TM{{0, 0, 0, 1, 1, 1, 1024000, 0}};
   NS_LOG_INFO("Trace entries: " << TM.size());
 
   // Creates a packet sink on all nodes.
@@ -351,15 +345,8 @@ int main(int argc, char *argv[]) {
   // If MPI is enabled, every process should write to its dedicated file.
   Ptr<OutputStreamWrapper> stream =
       Create<OutputStreamWrapper>(outPrefix + "fct.csv", std::ios::app);
-  for (const TMRow &row : TM) {
-    uint32_t src_x = std::get<0>(row);
-    uint32_t src_y = std::get<1>(row);
-    uint32_t src_z = std::get<2>(row);
-    uint32_t dst_x = std::get<3>(row);
-    uint32_t dst_y = std::get<4>(row);
-    uint32_t dst_z = std::get<5>(row);
-    uint64_t flow_size = std::get<6>(row);
-    uint64_t start_time = std::get<7>(row);
+  for (const auto &[src_x, src_y, src_z, dst_x, dst_y, dst_z, flow_size,
+                    start_time] : TM) {
     // Each node in a 3D torus has 6 interfaces, each with different IP
     // address. We only need to know the node to reach, specific interface does
     // not matter, hence we just always hardcode it to "x-".
