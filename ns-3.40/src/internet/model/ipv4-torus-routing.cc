@@ -200,9 +200,10 @@ bool Ipv4TorusRouting::LookupRoute(const Ipv4RoutingTableEntry &route,
   return false;
 }
 
-Ptr<Ipv4Route> Ipv4TorusRouting::ComputeRoute(Ipv4Address dest,
+Ptr<Ipv4Route> Ipv4TorusRouting::ComputeRoute(const Ipv4Header &header,
                                               Ptr<NetDevice> oif) {
-  NS_LOG_FUNCTION(this << dest << " " << oif);
+  NS_LOG_FUNCTION(this << header << " " << oif);
+  Ipv4Address dest = header.GetDestination();
   Ptr<Ipv4Route> rtentry = nullptr;
   uint16_t longest_mask = 0;
   uint32_t shortest_metric = 0xffffffff;
@@ -412,7 +413,7 @@ Ptr<Ipv4Route> Ipv4TorusRouting::RouteOutput(Ptr<Packet> p,
     // So, we just log it and fall through to ComputeRoute()
     NS_LOG_LOGIC("RouteOutput()::Multicast destination");
   }
-  rtentry = ComputeRoute(destination, oif);
+  rtentry = ComputeRoute(header, oif);
   if (rtentry) {
     sockerr = Socket::ERROR_NOTERROR;
   } else {
@@ -474,7 +475,7 @@ bool Ipv4TorusRouting::RouteInput(
     return true;
   }
   // Next, try to find a route
-  Ptr<Ipv4Route> rtentry = ComputeRoute(ipHeader.GetDestination());
+  Ptr<Ipv4Route> rtentry = ComputeRoute(ipHeader);
   if (rtentry) {
     NS_LOG_LOGIC("Found unicast destination- calling unicast callback");
     ucb(rtentry, p, ipHeader); // unicast forwarding callback

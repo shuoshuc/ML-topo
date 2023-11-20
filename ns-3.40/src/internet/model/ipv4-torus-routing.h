@@ -396,11 +396,12 @@ private:
 
   /**
    * \brief Lookup in the forwarding table for destination.
-   * \param dest destination address
+   * \param header Ipv4 header
    * \param oif output interface if any (put 0 otherwise)
    * \return Ipv4Route to route the packet to reach dest address
    */
-  Ptr<Ipv4Route> ComputeRoute(Ipv4Address dest, Ptr<NetDevice> oif = nullptr);
+  Ptr<Ipv4Route> ComputeRoute(const Ipv4Header &header,
+                              Ptr<NetDevice> oif = nullptr);
 
   /**
    * \brief Lookup in the multicast forwarding table for destination.
