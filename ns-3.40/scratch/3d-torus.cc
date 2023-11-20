@@ -27,6 +27,7 @@
 #include "ns3/network-module.h"
 #include "ns3/packet-sink-helper.h"
 #include "ns3/point-to-point-helper.h"
+#include "ns3/torus-constants.h"
 
 #include <algorithm>
 #include <fstream>
@@ -142,8 +143,6 @@ int main(int argc, char *argv[]) {
 
   // Fabric name.
   std::string NET = "toy1";
-  // Number of nodes on each dimension.
-  int N = 16;
   // The corrdinates of devices which should enable pcap trace on.
   std::set<std::tuple<uint32_t, uint32_t, uint32_t, Direction_t>> pcap_ifs{
       //{1, 0, 0, X_MINUS},

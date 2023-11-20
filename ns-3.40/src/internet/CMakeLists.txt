@@ -141,6 +141,7 @@ set(header_files
     helper/ipv4-routing-helper.h
     helper/ipv4-static-routing-helper.h
     helper/ipv4-torus-routing-helper.h
+    helper/torus-constants.h
     helper/ipv6-address-helper.h
     helper/ipv6-interface-container.h
     helper/ipv6-list-routing-helper.h

@@ -33,7 +33,9 @@
 #include "ns3/output-stream-wrapper.h"
 #include "ns3/packet.h"
 #include "ns3/simulator.h"
+#include "ns3/torus-constants.h"
 
+#include <cstdlib>
 #include <iomanip>
 
 using std::make_pair;
@@ -278,29 +280,12 @@ Ptr<Ipv4Route> Ipv4TorusRouting::ComputeRoute(const Ipv4Header &header,
     // Follow static Manhattan routing, i.e., if src_x != dst_x, send packet
     // along the x-axis, else send along y-axis, otherwise send along z-axis.
     uint32_t interfaceIdx = 0;
-    // Dst is on the x- side of src.
-    if (dst_x - src_x < 0) {
-      interfaceIdx = 1;
-    }
-    // Dst is on the x+ side of src.
-    else if (dst_x - src_x > 0) {
-      interfaceIdx = 2;
-    }
-    // Dst is on the y- side of src.
-    else if (dst_y - src_y < 0) {
-      interfaceIdx = 3;
-    }
-    // Dst is on the y+ side of src.
-    else if (dst_y - src_y > 0) {
-      interfaceIdx = 4;
-    }
-    // Dst is on the z- side of src.
-    else if (dst_z - src_z < 0) {
-      interfaceIdx = 5;
-    }
-    // Dst is on the z+ side of src.
-    else if (dst_z - src_z > 0) {
-      interfaceIdx = 6;
+    if (src_x != dst_x) {
+      interfaceIdx = RouteOnRing(src_x, dst_x, N) ? 2 : 1;
+    } else if (src_y != dst_y) {
+      interfaceIdx = RouteOnRing(src_y, dst_y, N) ? 4 : 3;
+    } else if (src_z != dst_z) {
+      interfaceIdx = RouteOnRing(src_z, dst_z, N) ? 6 : 5;
     }
     rtentry->SetSource(m_ipv4->SourceAddressSelection(
         interfaceIdx, rtentry->GetDestination()));
@@ -329,6 +314,17 @@ Ipv4TorusRouting::UnpackCoordinates(const Ipv4Address &addr) {
       ((addr.CombineMask(Ipv4Mask("0.0.255.0")).Get() >> (8 * 1)) & 0xff) - 100;
 
   return std::make_tuple(x, y, z);
+}
+
+bool Ipv4TorusRouting::RouteOnRing(int coordSrc, int coordDst, int C) {
+  int dist1 = coordDst - coordSrc;
+  std::pair<int, bool> arc1 = {abs(dist1), (dist1 >= 0) ? true : false};
+  std::pair<int, bool> arc2 = {C - abs(dist1), !arc1.second};
+  if (arc1.first <= arc2.first) {
+    return arc1.second;
+  } else {
+    return arc2.second;
+  }
 }
 
 Ptr<Ipv4MulticastRoute> Ipv4TorusRouting::LookupStatic(Ipv4Address origin,

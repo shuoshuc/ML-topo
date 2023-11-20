@@ -412,6 +412,16 @@ private:
   std::tuple<int, int, int> UnpackCoordinates(const Ipv4Address &addr);
 
   /**
+   * \brief Decides which direction to route on a ring.
+   * \param coordSrc Src coordinate
+   * \param coordDst Dst coordinate
+   * \param C Circumference of the ring
+   * \return True to route on the "+" direction, false to route on the "-"
+   * direction.
+   */
+  bool RouteOnRing(int coordSrc, int coordDst, int C);
+
+  /**
    * \brief Lookup in the multicast forwarding table for destination.
    * \param origin source address
    * \param group group multicast address
